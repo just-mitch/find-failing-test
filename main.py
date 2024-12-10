@@ -15,10 +15,14 @@ dotenv.load_dotenv()
 
 # GitHub repository details
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-OWNER = "aztecprotocol"  # Replace with the repository owner
-REPO = "aztec-packages"  # Replace with the repository name
-WORKFLOW_ID = "ci.yml"  # Replace with the workflow file name
-BRANCH = "master"  # Replace with the branch name
+OWNER = os.getenv("OWNER")
+REPO = os.getenv("REPO")
+WORKFLOW_ID = os.getenv("WORKFLOW_ID")
+BRANCH = os.getenv("BRANCH")
+
+# error if any of the required env vars are not set
+if not GITHUB_TOKEN or not OWNER or not REPO or not WORKFLOW_ID or not BRANCH:
+    raise ValueError("Missing required environment variables")
 
 # GitHub API base URL
 BASE_URL = "https://api.github.com"
