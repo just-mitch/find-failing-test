@@ -3,11 +3,13 @@ import logging
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from time import time
 
 import dotenv
+import matplotlib.pyplot as plt
+import numpy as np
 import requests
 
 dotenv.load_dotenv()
@@ -124,9 +126,60 @@ def find_failed_jobs(run_id):
     return failed_jobs
 
 
+def create_failure_timeline(job_failures):
+    """Create a heatmap of failures over time."""
+    daily_failures = defaultdict(lambda: defaultdict(int))
+
+    for run in job_failures:
+        for job in run["jobs"]:
+            date = datetime.fromisoformat(
+                job["started_at"].replace("Z", "+00:00")
+            ).date()
+            job_name = job["name"]
+            daily_failures[date][job_name] += 1
+
+    dates = sorted(daily_failures.keys())
+    job_names = sorted(
+        set(
+            job_name
+            for failures in daily_failures.values()
+            for job_name in failures.keys()
+        )
+    )
+
+    # Create the data matrix
+    data = np.zeros((len(job_names), len(dates)))
+    for i, job in enumerate(job_names):
+        for j, date in enumerate(dates):
+            data[i, j] = daily_failures[date][job]
+
+    plt.figure(figsize=(15, 10))
+
+    plt.imshow(data, aspect="auto", cmap="YlOrRd")
+    plt.colorbar(label="Number of Failures")
+
+    plt.title("CI Failures Over Time", pad=20, size=14)
+    plt.xlabel("Date", size=12)
+    plt.ylabel("Jobs", size=12)
+
+    date_strings = [d.strftime("%Y-%m-%d") for d in dates]
+    plt.xticks(range(len(dates)), date_strings, rotation=45, ha="right")
+    plt.yticks(range(len(job_names)), job_names)
+
+    # Add value labels
+    for i in range(len(job_names)):
+        for j in range(len(dates)):
+            if data[i, j] > 0:
+                plt.text(j, i, int(data[i, j]), ha="center", va="center")
+
+    plt.tight_layout()
+    plt.savefig("failure_timeline.png", bbox_inches="tight", dpi=300)
+    plt.close()
+
+
 def main():
-    # Track failures by job name
     job_failure_counts = defaultdict(int)
+    failure_data = []  # Store all failure data for timeline
 
     try:
         runs = get_failed_workflow_runs()
@@ -139,6 +192,9 @@ def main():
             logger.info(f"\nChecking workflow run from {run_date}")
 
             failed_jobs = find_failed_jobs(run_id)
+            if failed_jobs:
+                failure_data.append({"date": run_date, "jobs": failed_jobs})
+
             for job in failed_jobs:
                 failure_date = datetime.fromisoformat(
                     job["started_at"].replace("Z", "+00:00")
@@ -159,6 +215,9 @@ def main():
             logger.info(
                 f"Total failures across all jobs: {sum(job_failure_counts.values())}"
             )
+
+            # Create timeline visualization
+            create_failure_timeline(failure_data)
         else:
             logger.info(f"No failed jobs found in the workflow on branch '{BRANCH}'.")
 
