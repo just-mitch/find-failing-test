@@ -11,4 +11,6 @@ wheels/
 .env
 
 *.png
+!readme_example.png
+
 .cache
