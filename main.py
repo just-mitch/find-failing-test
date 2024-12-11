@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -113,6 +114,7 @@ def find_failed_jobs(run_id):
 
     # Check if we have cached jobs for this run
     if str(run_id) in jobs_cache:
+        logger.info(f"Using cached jobs for run {run_id}")
         return jobs_cache[str(run_id)]
 
     # If not in cache, fetch from API with pagination
@@ -144,10 +146,9 @@ def find_failed_jobs(run_id):
     for job in failed_jobs:
         if job["name"] == "yarn-project-test":
             try:
-                job["logs"] = get_job_logs(job["id"])
+                get_job_logs(job["id"])
             except Exception as e:
                 logger.warning(f"Failed to fetch logs for job {job['id']}: {e}")
-                job["logs"] = None
 
     # Update cache with new jobs
     jobs_cache[str(run_id)] = failed_jobs
@@ -243,8 +244,34 @@ def create_failure_timeline(job_failures):
     plt.close()
 
 
+def parse_test_failures(log_content):
+    """Parse log content to find test failures and extract test information."""
+    failures = []
+    for line in log_content.splitlines():
+        if " FAIL " in line:
+            # logger.info(f"Found test failure: {line}")
+            try:
+                # Extract package name (e.g., "@aztec/prover-node")
+                # use regex to find the package name
+                package_match = re.search(r"\[(@aztec/[a-zA-Z0-9-]+)\]", line)
+                package = package_match.group(1) if package_match else None
+
+                # Extract test file name (e.g., "prover-node.test.ts")
+                test_file_match = re.search(r"[a-zA-Z0-9/]+\.test\.ts", line)
+                test_file = test_file_match.group(0) if test_file_match else None
+
+                if package and test_file:
+                    failures.append(f"{package} ({test_file})")
+            except Exception as e:
+                logger.warning(f"Failed to parse test failure line: {e}")
+                continue
+
+    return list(set(failures))
+
+
 def main():
     job_failure_counts = defaultdict(int)
+    test_failure_counts = defaultdict(int)
     failure_data = []  # Store all failure data for timeline
 
     try:
@@ -273,6 +300,19 @@ def main():
                 logger.info(f"  Failed at: {failure_date}")
                 logger.info(f"  URL: {job['html_url']}")
 
+        # Parse all log files for test failures
+        logger.info("\nAnalyzing test failures from logs...")
+        for log_file in LOGS_DIR.glob("job_*.txt"):
+            try:
+                with open(log_file, "r") as f:
+                    log_content = f.read()
+                    failures = parse_test_failures(log_content)
+                    for failure in failures:
+                        test_failure_counts[failure] += 1
+            except Exception as e:
+                logger.warning(f"Failed to process log file {log_file}: {e}")
+
+        logger.info(f"Test failures: {test_failure_counts}")
         # Print summary
         if job_failure_counts:
             logger.info("\nFailure Summary by Job:")
@@ -281,6 +321,12 @@ def main():
             logger.info(
                 f"Total failures across all jobs: {sum(job_failure_counts.values())}"
             )
+
+            # Print test failure summary
+            if test_failure_counts:
+                logger.info("Yarn Project Test Failures:")
+                for failure, count in sorted(test_failure_counts.items()):
+                    logger.info(f"{failure}: {count} failures")
 
             # Create timeline visualization
             create_failure_timeline(failure_data)
