@@ -114,13 +114,30 @@ def find_failed_jobs(run_id):
     if str(run_id) in jobs_cache:
         return jobs_cache[str(run_id)]
 
-    # If not in cache, fetch from API
-    url = f"{BASE_URL}/repos/{OWNER}/{REPO}/actions/runs/{run_id}/jobs"
-    response = requests.get(url, headers=HEADERS)
-    response.raise_for_status()
+    # If not in cache, fetch from API with pagination
+    all_jobs = []
+    page = 1
+    per_page = 100  # Maximum allowed by GitHub API
 
-    jobs = response.json().get("jobs", [])
-    failed_jobs = [job for job in jobs if job["conclusion"] == "failure"]
+    while True:
+        url = f"{BASE_URL}/repos/{OWNER}/{REPO}/actions/runs/{run_id}/jobs"
+        params = {"page": page, "per_page": per_page}
+        response = requests.get(url, headers=HEADERS, params=params)
+        response.raise_for_status()
+
+        jobs = response.json().get("jobs", [])
+        if not jobs:
+            break
+
+        all_jobs.extend(jobs)
+
+        # Check if we've received all jobs
+        if len(jobs) < per_page:
+            break
+
+        page += 1
+
+    failed_jobs = [job for job in all_jobs if job["conclusion"] == "failure"]
 
     # Update cache with new jobs
     jobs_cache[str(run_id)] = failed_jobs
