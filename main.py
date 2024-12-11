@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 CACHE_DIR = Path(".cache")
 WORKFLOW_CACHE_FILE = CACHE_DIR / "workflow_failures.json"
 JOBS_CACHE_FILE = CACHE_DIR / "job_failures.json"
+LOGS_DIR = CACHE_DIR / "logs"  # New directory for storing log files
 CACHE_EXPIRY = 3600  # Cache expires after 1 hour (in seconds)
 
 
@@ -139,11 +140,56 @@ def find_failed_jobs(run_id):
 
     failed_jobs = [job for job in all_jobs if job["conclusion"] == "failure"]
 
+    # Fetch logs for yarn-project-test jobs
+    for job in failed_jobs:
+        if job["name"] == "yarn-project-test":
+            try:
+                job["logs"] = get_job_logs(job["id"])
+            except Exception as e:
+                logger.warning(f"Failed to fetch logs for job {job['id']}: {e}")
+                job["logs"] = None
+
     # Update cache with new jobs
     jobs_cache[str(run_id)] = failed_jobs
     save_cache(jobs_cache, JOBS_CACHE_FILE)
 
     return failed_jobs
+
+
+def get_job_logs(job_id):
+    """Fetch and cache logs for a specific job."""
+    # Create logs directory if it doesn't exist
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    log_file = LOGS_DIR / f"job_{job_id}.txt"
+
+    # Check if we have a recent log file (less than CACHE_EXPIRY old)
+    if log_file.exists() and time() - log_file.stat().st_mtime < CACHE_EXPIRY:
+        logger.info(f"Using cached log file for job {job_id}")
+        with open(log_file, "r") as f:
+            return f.read()
+
+    # If not in cache or expired, fetch from API
+    logger.info(f"Fetching logs for job {job_id}...")
+
+    # Get the download URL
+    logs_url = f"{BASE_URL}/repos/{OWNER}/{REPO}/actions/jobs/{job_id}/logs"
+    response = requests.get(logs_url, headers=HEADERS, allow_redirects=False)
+    response.raise_for_status()
+
+    # Follow the redirect to get the actual logs
+    if response.status_code == 302:
+        download_url = response.headers["Location"]
+        log_response = requests.get(download_url)
+        log_response.raise_for_status()
+
+        # Save logs to file
+        with open(log_file, "w") as f:
+            f.write(log_response.text)
+
+        return log_response.text
+    else:
+        raise Exception("Expected redirect response for logs URL")
 
 
 def create_failure_timeline(job_failures):
