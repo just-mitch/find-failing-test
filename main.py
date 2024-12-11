@@ -244,7 +244,7 @@ def create_failure_timeline(job_failures):
     plt.close()
 
 
-def parse_test_failures(log_content):
+def parse_test_failures(log_content) -> list[str]:
     """Parse log content to find test failures and extract test information."""
     failures = []
     for line in log_content.splitlines():
@@ -285,8 +285,8 @@ def main():
             logger.info(f"\nChecking workflow run from {run_date}")
 
             failed_jobs = find_failed_jobs(run_id)
-            if failed_jobs:
-                failure_data.append({"date": run_date, "jobs": failed_jobs})
+            # Create a list of job dictionaries with the required structure
+            formatted_jobs = []
 
             for job in failed_jobs:
                 failure_date = datetime.fromisoformat(
@@ -295,22 +295,32 @@ def main():
                 job_name = job["name"]
                 job_failure_counts[job_name] += 1
 
+                # Add the job to formatted_jobs
+                formatted_jobs.append(
+                    {"name": job_name, "started_at": job["started_at"]}
+                )
+
                 logger.info(f"Found failure in job '{job_name}':")
                 logger.info(f"  Workflow run ID: {run_id}")
                 logger.info(f"  Failed at: {failure_date}")
                 logger.info(f"  URL: {job['html_url']}")
 
-        # Parse all log files for test failures
-        logger.info("\nAnalyzing test failures from logs...")
-        for log_file in LOGS_DIR.glob("job_*.txt"):
-            try:
-                with open(log_file, "r") as f:
-                    log_content = f.read()
-                    failures = parse_test_failures(log_content)
-                    for failure in failures:
-                        test_failure_counts[failure] += 1
-            except Exception as e:
-                logger.warning(f"Failed to process log file {log_file}: {e}")
+                logger.info("\nAnalyzing test failures from logs...")
+                for log_file in LOGS_DIR.glob(f"job_{job['id']}.txt"):
+                    try:
+                        with open(log_file, "r") as f:
+                            log_content = f.read()
+                            failures = parse_test_failures(log_content)
+                            for failure in failures:
+                                test_failure_counts[failure] += 1
+                                # Add test failures as jobs with the same timestamp
+                                formatted_jobs.append(
+                                    {"name": failure, "started_at": job["started_at"]}
+                                )
+                    except Exception as e:
+                        logger.warning(f"Failed to process log file {log_file}: {e}")
+
+            failure_data.append({"date": run_date, "jobs": formatted_jobs})
 
         logger.info(f"Test failures: {test_failure_counts}")
         # Print summary
